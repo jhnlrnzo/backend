@@ -1,9 +1,15 @@
+from app.core.config import settings
 from fastapi import FastAPI
+from app.db.init_db import init_db
 
 app = FastAPI(
-    title = "ARES API",
-    version = "1.0.0"
+    title=settings.APP_NAME,
+    version=settings.APP_VERSION,
 )
+
+@app.on_event("startup")
+def on_startup():
+    init_db()
 
 @app.get("/")
 def root():
