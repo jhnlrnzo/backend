@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import Select
+from sqlalchemy import select
 from datetime import datetime, timezone
 
 from app.schemas.missions import (
@@ -24,8 +24,11 @@ router = APIRouter(
 
 @router.post("/")
 def create_mission(mission: MissionCreate, db: Session = Depends(get_db)):
+
     ticket = db.scalars(select(Ticket).where(Ticket.id == mission.ticket_id)).first()
+
     team = db.scalars(select(RescueTeam).where(RescueTeam.id == mission.team_id)).first()
+
     vehicle = db.scalars(select(Vehicle).where(Vehicle.id == mission.vehicle_id)).first()
 
     if ticket is None:
@@ -44,17 +47,12 @@ def create_mission(mission: MissionCreate, db: Session = Depends(get_db)):
             detail="Vehicle Not Found"
         )
 
-    if ticket.status != "AVAILABLE":
-        raise HTTPException(
-            status_code=409,
-            detail="Ticket is not available"
-        )
-    if team.status == "AVAILABLE" or team.members_count < mission.personnel_required or team.medical_personnel < mission.medical_personnel:
+    if team.status != "PENDING":
         raise HTTPException(
             status_code=409,
             detail="Team is not available"
         )
-    if vehicle.status == "AVAILABLE":
+    if vehicle.status != "PENDING":
         raise HTTPException(
             status_code=409,
             detail="Vehicle is not available"
@@ -65,8 +63,8 @@ def create_mission(mission: MissionCreate, db: Session = Depends(get_db)):
         team_id = mission.team_id,
         vehicle_id = mission.vehicle_id,
         priority = mission.priority,
-        latitude = mission.latitude,
-        longitude = mission.longitude,
+        latitude = ticket.latitude,
+        longitude = ticket.longitude,
         personnel_required = mission.personnel_required,
         medical_personnel = mission.medical_personnel,
         vehicle_required = mission.vehicle_required,
@@ -120,6 +118,235 @@ def update_mission(mission_id:str, mission_data: MissionUpdate, db: Session = De
         setattr(mission, field, value)
     db.commit()
     db.refresh(mission)
+    return mission
+
+@router.patch("/{mission_id}/en-route")
+def en_route_mission(mission_id:str, db: Session = Depends(get_db)):
+    
+    mission = db.scalars(select(Mission).where(Mission.id == mission_id)).first()
+
+    if mission is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Mission not found"
+        )
+    
+    if mission.status != "ASSIGNED":
+        raise HTTPException(
+            status_code=400,
+            detail="Mission must be ASSIGNED before going EN_ROUTE"
+        )
+
+    ticket= db.scalars(select(Ticket).where(Ticket.id == mission.ticket_id)).first()
+
+    if ticket is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Ticket not found"
+        )
+
+    old_mission_status=mission.status
+    old_ticket_status=ticket.status
+
+    mission.status = "EN_ROUTE"
+    ticket.status = "EN_ROUTE"
+
+    mission.en_route_at = datetime.now(timezone.utc)
+
+    create_audit_log(
+        db=db,
+        entity_type="MISSION",
+        entity_id=mission.id,
+        action="STATUS CHANGED",
+        old_value=old_mission_status,
+        new_value=mission.status,
+        performed_by=None
+    )
+
+    create_audit_log(
+        db=db,
+        entity_type="TICKET",
+        entity_id=ticket.id,
+        action="STATUS CHANGED",
+        old_value=old_ticket_status,
+        new_value=ticket.status,
+        performed_by=None
+    )
+
+    db.commit()
+    db.refresh(mission)
+
+    return mission
+
+@router.patch("/{mission_id}/on-scene")
+def on_scene_mission(mission_id:str, db: Session = Depends(get_db)):
+    mission = db.scalars(select(Mission).where(Mission.id == mission_id)).first()
+
+    if mission is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Mission not found"
+        )
+    
+    if mission.status != "EN_ROUTE":
+        raise HTTPException(
+            status_code=400,
+            detail="Mission must be EN_ROUTE before being ON_SCENE"
+        )
+
+    ticket= db.scalars(select(Ticket).where(Ticket.id == mission.ticket_id)).first()
+
+    if ticket is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Ticket not found"
+        )
+
+    old_mission_status=mission.status
+    old_ticket_status=ticket.status
+
+    mission.status = "ON_SCENE"
+    mission.arrived_at = datetime.now(timezone.utc)
+
+    ticket.status = "ON_SCENE"
+
+    create_audit_log(
+        db=db,
+        entity_type="MISSION",
+        entity_id=mission.id,
+        action="STATUS CHANGED",
+        old_value=old_mission_status,
+        new_value=mission.status,
+        performed_by=None
+    )
+
+    create_audit_log(
+        db=db,
+        entity_type="TICKET",
+        entity_id=ticket.id,
+        action="STATUS CHANGED",
+        old_value=old_ticket_status,
+        new_value=ticket.status,
+        performed_by=None
+    )
+
+    db.commit()
+    db.refresh(mission)
+
+    return mission
+
+@router.patch("/{mission_id}/completed")
+def completed_mission(mission_id:str, db: Session = Depends(get_db)):
+    mission = db.scalars(select(Mission).where(Mission.id == mission_id)).first()
+
+    if mission is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Mission not found"
+        )
+    
+    if mission.status != "ON_SCENE":
+        raise HTTPException(
+            status_code=400,
+            detail="Mission must be On Scene before being COMPLETED"
+        )
+
+    ticket= db.scalars(select(Ticket).where(Ticket.id == mission.ticket_id)).first()
+    team = db.scalars(select(RescueTeam).where(RescueTeam.id == mission.team_id)).first()
+    vehicle = db.scalars(select(Vehicle).where(Vehicle.id == mission.vehicle_id)).first()
+
+    if ticket is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Ticket not found"
+        )
+    if team is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Rescue Team not found"
+        )
+    if vehicle is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Vehicle not found"
+        )
+    
+
+
+    mission.status = "COMPLETED"
+    ticket.status = "RESCUED"
+
+    mission.completed_at = datetime.now(timezone.utc)
+
+    if team: 
+        team.status = "AVAILABLE"
+
+    if vehicle:
+        vehicle.status = "AVAILABLE"
+
+    db.commit()
+    db.refresh(mission)
+
+    return mission
+
+@router.patch("/{mission_id}/cancelled")
+def cancelled_mission(mission_id:str, db: Session = Depends(get_db)):
+    
+    mission = db.scalars(select(Mission).where(Mission.id == mission_id)).first()
+    
+    vehicle = db.scalars(select(Vehicle).where(Vehicle.id == mission.vehicle_id)).first()
+    
+    ticket = db.scalars(select(Ticket).where(Ticket.id == mission.ticket_id)).first()
+    
+    team = db.scalars(select(RescueTeam).where(RescueTeam.id == mission.team_id)).first()
+
+    if mission is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Mission not found"
+        )
+    
+    if mission.status in ["COMPLETED", "CANCELLED"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Mission cannot be CANCELLED as it is already COMPLETED or CANCELLED"
+        )
+
+    if ticket is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Ticket not found"
+        )
+
+    if vehicle is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Vehicle not found"
+        )
+
+    if team is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Rescue Team not found"
+        )
+
+    old_mission_status = mission.status
+    old_ticket_status = ticket.status
+
+    mission.status = "CANCELLED"
+    if team:
+        team.status = "AVAILABLE"
+    if vehicle:
+        vehicle.status = "AVAILABLE"
+    if ticket:
+        ticket.status = "CANCELLED"
+
+    mission.cancelled_at = datetime.now(timezone.utc)
+    ticket.cancelled_at = datetime.now(timezone.utc)
+
+    db.commit()
+    db.refresh(mission)
+
     return mission
 
 @router.delete("/{mission_id}")

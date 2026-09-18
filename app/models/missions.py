@@ -40,7 +40,7 @@ class Mission(Base):
 
     status: Mapped[str] = mapped_column(
         String(20),
-        default="PENDING"
+        default="ASSIGNED"
     )
 
     latitude: Mapped[float] = mapped_column(
@@ -75,7 +75,26 @@ class Mission(Base):
 
     updated_at: Mapped[DateTime] = mapped_column(
         DateTime(timezone=True),
-        server_defaut=func.now(),
+        server_default=func.now(),
         onupdate=func.now()
     )
 
+    en_route_at: Mapped[DateTime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True
+    )
+
+    arrived_at: Mapped[DateTime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True
+    )
+
+    completed_at: Mapped[DateTime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True
+    )
+
+    cancelled_at: Mapped[DateTime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True
+    )

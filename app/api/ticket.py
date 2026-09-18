@@ -24,10 +24,12 @@ def create_ticket(ticket: TicketCreate, db: Session = Depends(get_db)):
         caller_name=ticket.caller_name,
         caller_phone=ticket.caller_phone,
         incident_type=ticket.incident_type,
+        status="PENDING",
         latitude=ticket.latitude,
         longitude=ticket.longitude,
         notes=ticket.notes
     )
+
     db.add(new_ticket)
     db.commit()
     db.refresh(new_ticket)
@@ -118,7 +120,12 @@ def cancel_ticket(
 def delete_ticket(ticket_id: str, db: Session = Depends(get_db)):
     ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
     
-    
+    if ticket is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Ticket not found"
+        )
+
     db.delete(ticket)
     db.commit()
     return {
